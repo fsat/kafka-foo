@@ -1,21 +1,22 @@
 package test
 
-import akka.actor.{ActorSystem, ExtendedActorSystem}
-import akka.kafka.{ProducerMessage, ProducerSettings}
+import akka.actor.ActorSystem
+import akka.kafka.ProducerSettings
 import akka.kafka.scaladsl.Producer
 import akka.stream._
-import akka.stream.scaladsl.{Keep, StreamConverters}
+import akka.stream.scaladsl.StreamConverters
 import org.apache.kafka.clients.producer.ProducerRecord
 import org.apache.kafka.common.serialization.{ByteArraySerializer, StringSerializer}
+import test.stream.{GroupByLineBreaks, TerminateWhenExit}
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.util.Failure
 
-object Main {
+object Simple {
 
   def main(args: Array[String]): Unit = {
-    println("Starting STDIN streams")
+    println("Reading from STDIN. Type exit to terminate.")
 
     implicit val actorSystem: ActorSystem = ActorSystem("kafka-foo")
     implicit val materializer: ActorMaterializer = ActorMaterializer()
