@@ -2,15 +2,15 @@ package test.actor
 
 import akka.Done
 import akka.actor.{Actor, ActorLogging, ActorRef, Props}
+import akka.pattern._
 import akka.stream.{ActorMaterializer, OverflowStrategy}
 import akka.stream.scaladsl.{Keep, Sink, Source}
 import akka.util.ByteString
 import org.apache.kafka.clients.producer.ProducerRecord
-import test.actor.KafkaPublish.{ConnectToKafka, Publish}
+import test.actor.KafkaPublish.{ConnectToKafka, Disconnected, Publish}
 
 import scala.collection.immutable.Seq
 import scala.concurrent.Future
-import scala.util.Failure
 
 object KafkaPublish {
   def props[K, V](publishToKafka: Sink[ProducerRecord[K, V], Future[Done]]): Props = Props(new KafkaPublish(publishToKafka))
@@ -26,6 +26,7 @@ object KafkaPublish {
 
   sealed trait InternalMessage extends Message
   case object ConnectToKafka extends InternalMessage
+  case class Disconnected(error: Option[Throwable]) extends InternalMessage
 }
 
 class KafkaPublish[K, V](publishToKafka: Sink[ProducerRecord[K, V], Future[Done]]) extends Actor with ActorLogging {
@@ -49,24 +50,28 @@ class KafkaPublish[K, V](publishToKafka: Sink[ProducerRecord[K, V], Future[Done]
 
       cachedMessages.foreach(v => ref ! Publish.toProducerRecord(v))
 
-      val myself = context.self
-      stream.onComplete {
-        case Failure(e) =>
-          log.error(e, "Disconnected from Kafka - reconnecting...")
-          context.become(connecting(Seq.empty))
-          myself ! ConnectToKafka
-        case _ =>
-          log.error("Disconnected from Kafka - reconnecting...")
-          context.become(connecting(Seq.empty))
-          myself ! ConnectToKafka
-      }
+      stream
+        .map(_ => Disconnected(error = None))
+        .recover {
+          case e => Disconnected(error = Some(e))
+        }
+        .pipeTo(context.self)
 
     case v: Publish =>
       context.become(connecting(cachedMessages :+ v))
+
+    case Disconnected(error) =>
+      error.fold(log.error("Disconnected from Kafka, reconnecting..."))(log.error(_, "Disconnected from Kafka, reconnecting..."))
+      self ! ConnectToKafka
   }
 
   private def connected(ref: ActorRef): Receive = {
     case v: Publish =>
       ref ! Publish.toProducerRecord(v)
+
+    case Disconnected(error) =>
+      error.fold(log.error("Disconnected from Kafka, reconnecting..."))(log.error(_, "Disconnected from Kafka, reconnecting..."))
+      context.become(connecting(Seq.empty))
+      self ! ConnectToKafka
   }
 }
